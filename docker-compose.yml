@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  engine:
+    build: .
+    container_name: terrestrial_impact_engine
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - ENVIRONMENT=development
+      - ALLOW_MOCK_DATA=True
+      - DASHBOARD_PATH=/app/data/impact_analysis.json
+    command: python main_monitor.py

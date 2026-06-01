@@ -1,0 +1,20 @@
+{
+  "target": "Starbase (Boca Chica), TX",
+  "bbox": [
+    -97.18,
+    25.985,
+    -97.145,
+    26.005
+  ],
+  "metric": "percent_built_up (NDBI > 0.05; SCL cloud+water masked)",
+  "season_window": "01-01..04-30 each year",
+  "source": "Copernicus Sentinel-2 L2A",
+  "by_year": {
+    "2019": 21.92,
+    "2020": 52.42,
+    "2021": 66.81,
+    "2022": 64.54,
+    "2023": 71.0,
+    "2024": 55.35
+  }
+}

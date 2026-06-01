@@ -1,0 +1,10 @@
+# Core engine dependencies
+numpy>=1.24.0           # Numerical computing
+rasterio>=1.3.9         # Geospatial raster I/O (Sentinel-2 GeoTIFF)
+python-dotenv>=1.0.0    # Environment variable management
+sentinelhub>=3.9.0      # Sentinel Hub / Copernicus API client
+
+# Launch cadence uses the Python standard library (urllib) — no extra dependency.
+
+# Development
+pytest>=7.4.0           # Testing

@@ -1,0 +1,17 @@
+{
+  "_provenance": {
+    "source": "Launch Library 2 (The Space Devs) — https://thespacedevs.com",
+    "endpoint": "https://ll.thespacedevs.com/2.2.0/launch/",
+    "metric": "orbital + suborbital launch attempts per calendar year, by launch location",
+    "fetched": "2026-06-01",
+    "note": "Committed snapshot so the engine and contributors run without hitting LL2 rate limits. Refresh with: python -m managers.launch_manager --refresh"
+  },
+  "sites": {
+    "Starbase (Boca Chica), TX":        {"location_id": 143, "by_year": {"2019": 2,  "2020": 3,  "2021": 4,  "2022": 0,  "2023": 2,  "2024": 4}},
+    "Cape Canaveral SFS, FL":           {"location_id": 12,  "by_year": {"2019": 13, "2020": 20, "2021": 19, "2022": 38, "2023": 59, "2024": 67}},
+    "Vandenberg SFB, CA":               {"location_id": 11,  "by_year": {"2019": 3,  "2020": 1,  "2021": 6,  "2022": 16, "2023": 30, "2024": 47}},
+    "Kennedy Space Center, FL":         {"location_id": 27,  "by_year": {"2019": 3,  "2020": 11, "2021": 12, "2022": 19, "2023": 13, "2024": 25}},
+    "Wallops Flight Facility, VA":      {"location_id": 21,  "by_year": {"2019": 2,  "2020": 3,  "2021": 3,  "2022": 2,  "2023": 4,  "2024": 3}},
+    "Spaceport America, NM":            {"location_id": 31,  "by_year": {"2019": 3,  "2020": 0,  "2021": 0,  "2022": 0,  "2023": 0,  "2024": 0}}
+  }
+}

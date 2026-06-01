@@ -1,0 +1,3 @@
+# GPU workload dependencies (kept separate from the lightweight engine core)
+torch>=2.2
+numpy>=1.24
