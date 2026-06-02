@@ -139,7 +139,9 @@ def main():
 
     model = UNet(in_channels=args.channels).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    loss_fn = nn.BCEWithLogitsLoss()
+    # built-up pixels are ~2% of the scene — weight them 50× so the model
+    # actually tries to find them instead of predicting "nothing" everywhere.
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]).to(device))
 
     best_iou = -1.0
     os.makedirs("cv/checkpoints", exist_ok=True)
