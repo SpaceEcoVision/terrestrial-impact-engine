@@ -1,18 +1,20 @@
 """
-Training scaffold for the built-up segmentation model.
+Training for the built-up segmentation model.
 
 This is the GPU workload: train a U-Net to segment built-up surface from
 Sentinel-2 tiles. It runs end-to-end today.
 
-  - Real data:  put (C,H,W) image tiles in cv/data/images/*.npy and matching
-                {0,1} masks in cv/data/masks/*.npy. Inputs come from the engine's
-                Sentinel-2 fetch; labels from ESA WorldCover (built-up class).
-  - --demo:     no data needed — generates a small structured sample so the full
-                train loop runs and the loss visibly drops (a smoke test that the
-                model and pipeline learn). Use this to verify GPU readiness.
+  - Real data:  prepare with `python cv/prepare_data.py`, which writes a SITE-held-out
+                split to  cv/data/{train,val}/{images,masks}/*.npy  — Sentinel-2
+                tiles paired with ESA WorldCover built-up labels. Training reports
+                IoU on the held-out sites, so the accuracy number is honest.
+  - --demo:     no data/creds needed — generates a small structured sample so the
+                full train+val loop runs and the loss drops / IoU rises. Smoke test
+                that the model and pipeline learn. Use this to verify GPU readiness.
 
-Run from repo root:  python cv/train.py --demo --epochs 3
-Scale on GPU later:  python cv/train.py --data-dir cv/data --epochs 50
+Run from repo root:
+    python cv/train.py --demo --epochs 3
+    python cv/train.py --data-dir cv/data --epochs 50 --batch-size 16
 """
 import argparse
 import glob
@@ -46,7 +48,7 @@ class TileDataset(Dataset):
         return torch.from_numpy(x), torch.from_numpy(y).unsqueeze(0)
 
 
-def make_demo_data(out_dir: str, n: int = 16, channels: int = 4, size: int = 64):
+def make_demo_data(out_dir: str, n: int = 16, channels: int = 6, size: int = 64):
     """Synthetic but learnable: a bright rectangle in one band = the built-up mask."""
     img_dir, mask_dir = os.path.join(out_dir, "images"), os.path.join(out_dir, "masks")
     os.makedirs(img_dir, exist_ok=True)
@@ -64,6 +66,29 @@ def make_demo_data(out_dir: str, n: int = 16, channels: int = 4, size: int = 64)
     return img_dir, mask_dir
 
 
+def resolve_dirs(data_dir: str, demo: bool, channels: int):
+    """Return (train_img, train_mask, val_img, val_mask). val dirs may be None.
+
+    Layouts:
+      - real:  data_dir/{train,val}/{images,masks}   (from prepare_data.py)
+      - flat:  data_dir/{images,masks}               (e.g. --demo, no val split)
+    """
+    if demo:
+        img, mask = make_demo_data(data_dir, channels=channels)
+        print(f"[demo] generated sample tiles in {data_dir}")
+        return img, mask, None, None
+    if os.path.isdir(os.path.join(data_dir, "train")):
+        t = (os.path.join(data_dir, "train", "images"),
+             os.path.join(data_dir, "train", "masks"))
+        v = (os.path.join(data_dir, "val", "images"),
+             os.path.join(data_dir, "val", "masks"))
+        if not os.path.isdir(v[0]):
+            v = (None, None)
+        return t[0], t[1], v[0], v[1]
+    return (os.path.join(data_dir, "images"),
+            os.path.join(data_dir, "masks"), None, None)
+
+
 def pick_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
@@ -72,47 +97,73 @@ def pick_device() -> str:
     return "cpu"
 
 
+@torch.no_grad()
+def evaluate(model, dl, device, thresh=0.0):
+    """Mean built-up IoU + pixel accuracy over a loader (logits > thresh = built-up)."""
+    model.eval()
+    inter = union = correct = total = 0
+    for x, y in dl:
+        x, y = x.to(device), y.to(device)
+        pred = (model(x) > thresh).float()
+        inter += (pred * y).sum().item()
+        union += ((pred + y) >= 1).float().sum().item()
+        correct += (pred == y).float().sum().item()
+        total += y.numel()
+    model.train()
+    iou = inter / union if union else float("nan")
+    return iou, correct / total
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="cv/data")
     ap.add_argument("--demo", action="store_true")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--batch-size", type=int, default=4)
-    ap.add_argument("--channels", type=int, default=4)
+    ap.add_argument("--channels", type=int, default=6)
     args = ap.parse_args()
 
-    if args.demo:
-        img_dir, mask_dir = make_demo_data(args.data_dir, channels=args.channels)
-        print(f"[demo] generated sample tiles in {args.data_dir}")
-    else:
-        img_dir = os.path.join(args.data_dir, "images")
-        mask_dir = os.path.join(args.data_dir, "masks")
+    tr_img, tr_mask, va_img, va_mask = resolve_dirs(args.data_dir, args.demo, args.channels)
 
     device = pick_device()
     print(f"Device: {device}")
 
-    ds = TileDataset(img_dir, mask_dir)
-    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True)
+    train_ds = TileDataset(tr_img, tr_mask)
+    train_dl = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
+    val_dl = None
+    if va_img:
+        val_dl = DataLoader(TileDataset(va_img, va_mask), batch_size=args.batch_size)
+        print(f"train tiles: {len(train_ds)}  |  val tiles: {len(val_dl.dataset)} (held-out sites)")
+    else:
+        print(f"train tiles: {len(train_ds)}  |  no validation split")
+
     model = UNet(in_channels=args.channels).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
 
-    model.train()
+    best_iou = -1.0
+    os.makedirs("cv/checkpoints", exist_ok=True)
+    ckpt = "cv/checkpoints/unet.pt"
     for epoch in range(1, args.epochs + 1):
         total = 0.0
-        for x, y in dl:
+        for x, y in train_dl:
             x, y = x.to(device), y.to(device)
             opt.zero_grad()
             loss = loss_fn(model(x), y)
             loss.backward()
             opt.step()
             total += loss.item()
-        print(f"epoch {epoch}/{args.epochs}  loss={total / len(dl):.4f}")
+        msg = f"epoch {epoch}/{args.epochs}  loss={total / len(train_dl):.4f}"
+        if val_dl:
+            iou, acc = evaluate(model, val_dl, device)
+            msg += f"  val_IoU={iou:.3f}  val_acc={acc:.3f}"
+            if iou > best_iou:                       # keep the best-generalizing model
+                best_iou, _ = iou, torch.save(model.state_dict(), ckpt)
+        print(msg)
 
-    os.makedirs("cv/checkpoints", exist_ok=True)
-    ckpt = "cv/checkpoints/unet.pt"
-    torch.save(model.state_dict(), ckpt)
-    print(f"saved {ckpt}")
+    if not val_dl:                                   # no val: just save the final model
+        torch.save(model.state_dict(), ckpt)
+    print(f"saved {ckpt}" + (f"  (best val_IoU={best_iou:.3f})" if val_dl else ""))
 
 
 if __name__ == "__main__":
