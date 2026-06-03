@@ -45,10 +45,15 @@ class TileDataset(Dataset):
     def __getitem__(self, i):
         x = np.load(self.imgs[i]).astype("float32")          # (C, H, W)
         y = np.load(self.masks[i]).astype("float32")         # (H, W)
-        if np.random.rand() > 0.5:                           # random horizontal flip
+        # satellite imagery has no preferred orientation — all 8 dihedral transforms are valid
+        k = np.random.randint(4)                             # 0/90/180/270° rotation
+        if k:
+            x = np.rot90(x, k, axes=(1, 2)).copy()
+            y = np.rot90(y, k).copy()
+        if np.random.rand() > 0.5:
             x = np.flip(x, axis=2).copy()
             y = np.flip(y, axis=1).copy()
-        if np.random.rand() > 0.5:                           # random vertical flip
+        if np.random.rand() > 0.5:
             x = np.flip(x, axis=1).copy()
             y = np.flip(y, axis=0).copy()
         return torch.from_numpy(x), torch.from_numpy(y).unsqueeze(0)
@@ -145,9 +150,17 @@ def main():
 
     model = UNet(in_channels=args.channels).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
-    # built-up pixels are ~2% of the scene — weight them 50× so the model
-    # actually tries to find them instead of predicting "nothing" everywhere.
-    loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]).to(device))
+    bce_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]).to(device))
+
+    def loss_fn(logits, target):
+        # Dice loss directly optimises intersection/union — the same thing as IoU.
+        # Combined with BCE it gives stable pixel-level gradients plus region-level signal.
+        bce = bce_fn(logits, target)
+        p = torch.sigmoid(logits)
+        inter = (p * target).sum(dim=(2, 3))
+        dice = 1 - (2 * inter + 1) / (p.sum(dim=(2, 3)) + target.sum(dim=(2, 3)) + 1)
+        return bce + dice.mean()
+
     # halve LR when val_IoU stops improving for 8 epochs — breaks past flat plateaus
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", factor=0.5, patience=8)
 
