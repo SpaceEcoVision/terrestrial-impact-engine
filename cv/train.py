@@ -45,6 +45,12 @@ class TileDataset(Dataset):
     def __getitem__(self, i):
         x = np.load(self.imgs[i]).astype("float32")          # (C, H, W)
         y = np.load(self.masks[i]).astype("float32")         # (H, W)
+        if np.random.rand() > 0.5:                           # random horizontal flip
+            x = np.flip(x, axis=2).copy()
+            y = np.flip(y, axis=1).copy()
+        if np.random.rand() > 0.5:                           # random vertical flip
+            x = np.flip(x, axis=1).copy()
+            y = np.flip(y, axis=0).copy()
         return torch.from_numpy(x), torch.from_numpy(y).unsqueeze(0)
 
 
@@ -142,6 +148,8 @@ def main():
     # built-up pixels are ~2% of the scene — weight them 50× so the model
     # actually tries to find them instead of predicting "nothing" everywhere.
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([50.0]).to(device))
+    # halve LR when val_IoU stops improving for 8 epochs — breaks past flat plateaus
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="max", factor=0.5, patience=8)
 
     best_iou = -1.0
     os.makedirs("cv/checkpoints", exist_ok=True)
@@ -161,6 +169,7 @@ def main():
             msg += f"  val_IoU={iou:.3f}  val_acc={acc:.3f}"
             if iou > best_iou:                       # keep the best-generalizing model
                 best_iou, _ = iou, torch.save(model.state_dict(), ckpt)
+            scheduler.step(iou)
         print(msg)
 
     if not val_dl:                                   # no val: just save the final model
